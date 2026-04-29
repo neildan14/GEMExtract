@@ -2,21 +2,21 @@
 Modern UI Styles and Themes for Project Manager
 """
 
-# Color Palette
+# Color Palette - Green Theme for GEMPHIL Technologies, Inc.
 COLORS = {
-    'primary': '#1E3A8A',      # Deep Blue
-    'primary_light': '#3B82F6', # Bright Blue
-    'secondary': '#0F766E',    # Teal
-    'success': '#10B981',      # Green
+    'primary': '#1B5E20',      # Deep Green (Primary)
+    'primary_light': '#2E7D32', # Medium-Dark Green
+    'secondary': '#388E3C',    # Medium Green
+    'success': '#4CAF50',      # Bright Green
     'danger': '#EF4444',       # Red
     'warning': '#F59E0B',      # Amber
-    'dark_bg': '#0F172A',      # Very Dark Blue
-    'light_bg': '#F8FAFC',     # Light Gray-Blue
+    'dark_bg': '#0D3817',      # Very Dark Green
+    'light_bg': '#80d15a',     # Light Green Background
     'white': '#FFFFFF',
-    'text_dark': '#1E293B',    # Dark Slate
-    'text_light': '#64748B',   # Medium Slate
-    'border': '#E2E8F0',       # Light Border
-    'hover': '#3B82F6',        # Hover Blue
+    'text_dark': '#0D3817',    # Dark Green
+    'text_light': '#4B5563',   # Medium-Light Green
+    'border': '#C8E6C9',       # Light Green Border
+    'hover': '#43A047',        # Hover Green
 }
 
 # Main Application Stylesheet
@@ -55,7 +55,7 @@ MAIN_STYLESHEET = f"""
     }}
     
     QPushButton#addBtn:hover {{
-        background-color: #059669;
+        background-color: {COLORS['hover']};
     }}
     
     QPushButton#deleteBtn {{
@@ -68,23 +68,23 @@ MAIN_STYLESHEET = f"""
     
     QTableWidget {{
         background-color: {COLORS['white']};
-        alternate-background-color: #F1F5F9;
-        gridline-color: #CBD5E1;
+        alternate-background-color: #F5FFF7;
+        gridline-color: #C8E6C9;
         border: 1px solid {COLORS['border']};
         border-radius: 4px;
     }}
     
     QTableWidget::item {{
-        padding: 5px;
-        border-right: 1px solid #E2E8F0;
-        border-bottom: 1px solid #E2E8F0;
+        padding: 8px;
+        border-right: 1px solid {COLORS['border']};
+        border-bottom: 1px solid {COLORS['border']};
     }}
     
     QTableWidget::item:selected {{
         background-color: {COLORS['primary_light']};
         color: {COLORS['white']};
-        border-right: 1px solid #2563EB;
-        border-bottom: 1px solid #2563EB;
+        border-right: 1px solid {COLORS['primary']};
+        border-bottom: 1px solid {COLORS['primary']};
     }}
     
     QHeaderView::section {{
@@ -185,11 +185,11 @@ LOGIN_STYLESHEET = f"""
     }}
     
     QPushButton:hover {{
-        background-color: #059669;
+        background-color: {COLORS['hover']};
     }}
     
     QPushButton:pressed {{
-        background-color: #047857;
+        background-color: {COLORS['secondary']};
     }}
 """
 

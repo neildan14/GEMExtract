@@ -39,18 +39,18 @@ class AddEditRecordDialog(QDialog):
     def init_ui(self):
         """Initialize the UI components."""
         main_layout = QVBoxLayout()
-        main_layout.setContentsMargins(20, 20, 20, 20)
-        main_layout.setSpacing(10)
+        main_layout.setContentsMargins(25, 25, 25, 25)
+        main_layout.setSpacing(15)
         
         # Title
         title_label = QLabel("Add New Record" if not self.record_id else "Edit Record Details")
-        title_label.setStyleSheet("font-size: 14pt; font-weight: bold; color: #1E3A8A;")
+        title_label.setStyleSheet("font-size: 14pt; font-weight: bold; color: #1B5E20;")
         main_layout.addWidget(title_label)
         
         # Separator
         separator = QFrame()
         separator.setFrameShape(QFrame.Shape.HLine)
-        separator.setStyleSheet("background-color: #E2E8F0;")
+        separator.setStyleSheet("background-color: #C8E6C9; height: 2px;")
         main_layout.addWidget(separator)
         
         # Create a scrollable area for the form
@@ -58,24 +58,27 @@ class AddEditRecordDialog(QDialog):
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("""
             QScrollArea {
-                border: 1px solid #E2E8F0;
+                border: 1px solid #C8E6C9;
                 border-radius: 4px;
-                background-color: #F8FAFC;
+                background-color: #F1F8F4;
             }
             QScrollBar:vertical {
-                width: 8px;
-                background-color: #F1F5F9;
+                width: 10px;
+                background-color: #F5FFF7;
             }
             QScrollBar::handle:vertical {
-                background-color: #CBD5E1;
-                border-radius: 4px;
+                background-color: #A5D6A7;
+                border-radius: 5px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background-color: #81C784;
             }
         """)
         
         form_widget = QWidget()
         form_layout = QVBoxLayout(form_widget)
-        form_layout.setSpacing(12)
-        form_layout.setContentsMargins(10, 10, 10, 10)
+        form_layout.setSpacing(15)
+        form_layout.setContentsMargins(15, 15, 15, 15)
         
         # Define field labels and create input fields
         self.fields = {}
@@ -136,20 +139,23 @@ class AddEditRecordDialog(QDialog):
         # Separator
         separator2 = QFrame()
         separator2.setFrameShape(QFrame.Shape.HLine)
-        separator2.setStyleSheet("background-color: #E2E8F0;")
+        separator2.setStyleSheet("background-color: #C8E6C9; height: 2px;")
         main_layout.addWidget(separator2)
         
         # Button layout
         button_layout = QHBoxLayout()
-        button_layout.setSpacing(10)
+        button_layout.setSpacing(15)
+        button_layout.setContentsMargins(0, 10, 0, 0)
         
         self.save_button = QPushButton("Save Record")
+        self.save_button.setMinimumHeight(40)
         self.save_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.save_button.clicked.connect(self.save_record)
         button_layout.addWidget(self.save_button)
         
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.setObjectName("cancelBtn")
+        self.cancel_button.setMinimumHeight(40)
         self.cancel_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.cancel_button.clicked.connect(self.reject)
         button_layout.addWidget(self.cancel_button)
@@ -161,7 +167,7 @@ class AddEditRecordDialog(QDialog):
     def load_record_data(self):
         """Load existing record data into the form fields."""
         try:
-            conn = sqlite3.connect("data/app_database.db")
+            conn = sqlite3.connect("data/app_database.db", timeout=10.0)
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT NO, CLIENT, LOCATION, CURRENCY, PROGRESS, IMAGE_PATH, 
@@ -235,7 +241,7 @@ class AddEditRecordDialog(QDialog):
                 self.fields['CLIENT'].setFocus()
                 return
             
-            conn = sqlite3.connect("data/app_database.db")
+            conn = sqlite3.connect("data/app_database.db", timeout=10.0)
             cursor = conn.cursor()
             
             if self.record_id:

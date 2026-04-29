@@ -1,337 +1,187 @@
 import sys
 import sqlite3
 import os
+import bcrypt
+import shutil                  # <-- Added for backups
+from datetime import datetime  # <-- Added for backups
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QTableWidget, 
                              QTableWidgetItem, QVBoxLayout, QHBoxLayout, QWidget, 
                              QPushButton, QMessageBox, QLabel, QFrame, QCheckBox, QFileDialog,
-                             QComboBox, QDialog, QScrollArea, QLineEdit, QTableWidgetItem as TableItem)
-from PyQt6.QtCore import Qt
-import bcrypt
+                             QComboBox, QDialog, QScrollArea, QLineEdit, QHeaderView)
+from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtGui import QPixmap, QIcon, QDesktopServices, QColor
+
+# --- Matplotlib for Dashboard Analytics ---
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+from matplotlib.figure import Figure
+
+# Local Modules
 from login_ui import LoginWindow
 from forms import AddEditRecordDialog
-from styles import MAIN_STYLESHEET
+from styles import MAIN_STYLESHEET, COLORS
 from database import initialize_database, create_default_admin
 from data_manager import import_excel, export_excel
 
+# --- Helper Dialogs ---
+
 class ColumnSelectionDialog(QDialog):
     """Dialog for selecting which columns to export"""
-    
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Select Columns to Export")
-        self.setGeometry(100, 100, 400, 500)
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #F8FAFC;
-            }
-            QLabel {
-                color: #1E3A8A;
-            }
-            QCheckBox {
-                color: #334155;
-                padding: 5px;
-            }
-            QPushButton {
-                background-color: #3B82F6;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #1E40AF;
-            }
+        self.setWindowTitle("Export Options")
+        self.setGeometry(100, 100, 400, 550)
+        self.setStyleSheet(f"""
+            QDialog {{ background-color: {COLORS['light_bg']}; }}
+            QLabel {{ color: {COLORS['text_dark']}; font-weight: bold; }}
+            QCheckBox {{ color: #334155; padding: 5px; }}
+            QPushButton {{ background-color: {COLORS['primary']}; color: white; border: none; padding: 8px 16px; border-radius: 4px; font-weight: bold; }}
+            QPushButton:hover {{ background-color: {COLORS['primary_light']}; }}
+            QPushButton#actionBtn {{ background-color: #64748B; padding: 6px 12px; font-size: 10pt; }}
+            QPushButton#actionBtn:hover {{ background-color: #475569; }}
         """)
         
-        # Column options
         self.column_options = [
-            ('NO', 'No.'),
-            ('CLIENT', 'Client'),
-            ('LOCATION', 'Location'),
-            ('CURRENCY', 'Currency'),
-            ('PROGRESS', 'Progress'),
-            ('IMAGE_PATH', 'Image'),
-            ('PROJECT', 'Project'),
-            ('GEMPHIL_DEVICE', 'Gemphil Device'),
-            ('DETAILS', 'Details'),
-            ('CONTACT_PERSON', 'Contact Person'),
-            ('EMAIL', 'Email')
+            ('NO', 'No.'), ('CLIENT', 'Client'), ('LOCATION', 'Location'),
+            ('CURRENCY', 'Currency'), ('PROGRESS', 'Progress'), ('IMAGE_PATH', 'Image'),
+            ('PROJECT', 'Project'), ('GEMPHIL_DEVICE', 'Gemphil Device'),
+            ('DETAILS', 'Details'), ('CONTACT_PERSON', 'Contact Person'), ('EMAIL', 'Email')
         ]
         
-        self.init_ui()
-        self.selected_columns = []
-    
-    def init_ui(self):
-        """Initialize the dialog UI"""
         layout = QVBoxLayout(self)
-        layout.setSpacing(15)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.addWidget(QLabel("Select Columns to Export:"))
         
-        # Title
-        title = QLabel("Select Columns to Export:")
-        title.setStyleSheet("font-size: 14pt; font-weight: bold; color: #1E3A8A; margin-bottom: 10px;")
-        layout.addWidget(title)
+        actions_layout = QHBoxLayout()
+        select_all_btn = QPushButton("✓ Select All")
+        select_all_btn.setObjectName("actionBtn")
+        select_all_btn.clicked.connect(self.select_all)
         
-        # Scrollable area for checkboxes
+        deselect_all_btn = QPushButton("✗ Deselect All")
+        deselect_all_btn.setObjectName("actionBtn")
+        deselect_all_btn.clicked.connect(self.deselect_all)
+        
+        actions_layout.addWidget(select_all_btn)
+        actions_layout.addWidget(deselect_all_btn)
+        actions_layout.addStretch()
+        layout.addLayout(actions_layout)
+        
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
-        scroll_area.setStyleSheet("QScrollArea { border: 1px solid #CBD5E1; border-radius: 4px; }")
-        
         scroll_widget = QWidget()
         scroll_layout = QVBoxLayout(scroll_widget)
-        scroll_layout.setSpacing(8)
-        scroll_layout.setContentsMargins(10, 10, 10, 10)
         
-        # Create checkboxes
         self.checkboxes = {}
         for col_db, col_display in self.column_options:
             checkbox = QCheckBox(col_display)
-            checkbox.setChecked(True)  # All selected by default
+            checkbox.setChecked(False) 
             self.checkboxes[col_db] = checkbox
             scroll_layout.addWidget(checkbox)
-        
-        scroll_layout.addStretch()
+            
         scroll_area.setWidget(scroll_widget)
         layout.addWidget(scroll_area)
         
-        # Button layout
-        button_layout = QHBoxLayout()
-        button_layout.setSpacing(10)
+        options_layout = QVBoxLayout()
+        self.sort_client_cb = QCheckBox("Sort alphabetically by Client")
+        self.sort_client_cb.setStyleSheet(f"font-weight: bold; color: {COLORS['text_dark']}; margin-top: 5px;")
+        options_layout.addWidget(self.sort_client_cb)
+        layout.addLayout(options_layout)
         
-        # Select All button
-        select_all_btn = QPushButton("✓ Select All")
-        select_all_btn.clicked.connect(self.select_all)
-        button_layout.addWidget(select_all_btn)
-        
-        # Deselect All button
-        deselect_all_btn = QPushButton("✗ Deselect All")
-        deselect_all_btn.clicked.connect(self.deselect_all)
-        button_layout.addWidget(deselect_all_btn)
-        
-        button_layout.addStretch()
-        
-        # OK button
-        ok_btn = QPushButton("✓ OK")
-        ok_btn.setMinimumWidth(100)
-        ok_btn.clicked.connect(self.accept_selection)
-        button_layout.addWidget(ok_btn)
-        
-        # Cancel button
-        cancel_btn = QPushButton("✗ Cancel")
-        cancel_btn.setMinimumWidth(100)
-        cancel_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #EF4444;
-            }
-            QPushButton:hover {
-                background-color: #DC2626;
-            }
-        """)
-        cancel_btn.clicked.connect(self.reject)
-        button_layout.addWidget(cancel_btn)
-        
-        layout.addLayout(button_layout)
-    
+        btn_layout = QHBoxLayout()
+        ok_btn = QPushButton("Confirm Export")
+        ok_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(ok_btn)
+        layout.addLayout(btn_layout)
+
     def select_all(self):
-        """Select all checkboxes"""
-        for checkbox in self.checkboxes.values():
-            checkbox.setChecked(True)
-    
+        for cb in self.checkboxes.values():
+            cb.setChecked(True)
+            
     def deselect_all(self):
-        """Deselect all checkboxes"""
-        for checkbox in self.checkboxes.values():
-            checkbox.setChecked(False)
-    
-    def accept_selection(self):
-        """Get selected columns and close dialog"""
-        self.selected_columns = [col for col, checkbox in self.checkboxes.items() if checkbox.isChecked()]
-        
-        if not self.selected_columns:
-            QMessageBox.warning(self, "Selection Error", "Please select at least one column to export")
-            return
-        
-        self.accept()
-    
+        for cb in self.checkboxes.values():
+            cb.setChecked(False)
+
     def get_selected_columns(self):
-        """Return list of selected column database names"""
-        return self.selected_columns
+        return [col for col, checkbox in self.checkboxes.items() if checkbox.isChecked()]
+        
+    def is_sort_by_client(self):
+        return self.sort_client_cb.isChecked()
 
 class AdminCredentialDialog(QDialog):
-    """Dialog for verifying admin credentials"""
-    
+    """Admin verification dialog"""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Admin Verification Required")
-        self.setGeometry(150, 150, 350, 200)
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #F8FAFC;
-            }
-            QLabel {
-                color: #1E3A8A;
-            }
-            QLineEdit {
-                padding: 8px;
-                border: 1px solid #CBD5E1;
-                border-radius: 4px;
-                background-color: white;
-            }
-            QPushButton {
-                background-color: #3B82F6;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #1E40AF;
-            }
+        self.setStyleSheet(f"""
+            QDialog {{ background-color: {COLORS['light_bg']}; }}
+            QLabel {{ color: {COLORS['text_dark']}; font-weight: bold; }}
+            QLineEdit {{ padding: 8px; border: 1px solid #CBD5E1; border-radius: 4px; background-color: white; }}
+            QPushButton {{ background-color: {COLORS['primary']}; color: white; border: none; padding: 8px 16px; border-radius: 4px; font-weight: bold; }}
         """)
         self.verified = False
-        self.init_ui()
-    
-    def init_ui(self):
-        """Initialize the dialog UI"""
+        
         layout = QVBoxLayout(self)
-        layout.setSpacing(15)
-        layout.setContentsMargins(20, 20, 20, 20)
-        
-        # Title
-        title = QLabel("⚠️ Admin verification required for this action")
-        title.setStyleSheet("font-weight: bold; color: #DC2626;")
-        layout.addWidget(title)
-        
-        # Username
         layout.addWidget(QLabel("Admin Username:"))
         self.username_input = QLineEdit()
-        self.username_input.setMinimumHeight(50)
         layout.addWidget(self.username_input)
         
-        # Password
         layout.addWidget(QLabel("Admin Password:"))
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.password_input.setMinimumHeight(50)
         self.password_input.returnPressed.connect(self.verify_credentials)
         layout.addWidget(self.password_input)
         
-        layout.addSpacing(10)
-        
-        # Button layout
-        button_layout = QHBoxLayout()
-        button_layout.addStretch()
-        
-        verify_btn = QPushButton("✓ Verify")
-        verify_btn.setMinimumWidth(100)
+        verify_btn = QPushButton("Verify")
         verify_btn.clicked.connect(self.verify_credentials)
-        button_layout.addWidget(verify_btn)
-        
-        cancel_btn = QPushButton("✗ Cancel")
-        cancel_btn.setMinimumWidth(100)
-        cancel_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #EF4444;
-            }
-            QPushButton:hover {
-                background-color: #DC2626;
-            }
-        """)
-        cancel_btn.clicked.connect(self.reject)
-        button_layout.addWidget(cancel_btn)
-        
-        layout.addLayout(button_layout)
+        layout.addWidget(verify_btn)
     
     def verify_credentials(self):
-        """Verify admin credentials"""
         username = self.username_input.text().strip()
         password = self.password_input.text()
         
-        if not username or not password:
-            QMessageBox.warning(self, "Input Error", "Please enter both username and password")
-            return
-        
         try:
-            conn = sqlite3.connect("data/app_database.db")
+            conn = sqlite3.connect("data/app_database.db", timeout=10.0)
             cursor = conn.cursor()
             cursor.execute("SELECT password_hash, role FROM users WHERE username = ?", (username,))
             result = cursor.fetchone()
             conn.close()
             
-            if result:
-                password_hash, role = result
-                if bcrypt.checkpw(password.encode(), password_hash) and role.lower() == 'admin':
-                    self.verified = True
-                    self.accept()
-                else:
-                    QMessageBox.warning(self, "Verification Failed", "Invalid credentials or user is not admin")
+            if result and bcrypt.checkpw(password.encode(), result[0]) and result[1].lower() == 'admin':
+                self.verified = True
+                self.accept()
             else:
-                QMessageBox.warning(self, "Verification Failed", "User not found")
+                QMessageBox.warning(self, "Verification Failed", "Invalid credentials or user is not admin")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Verification error: {str(e)}")
 
 class ManageUsersDialog(QDialog):
     """Dialog for managing users (admin only)"""
-    
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("👥 Manage Users")
+        self.setWindowTitle("Manage Users")
         self.setGeometry(100, 100, 600, 500)
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #F8FAFC;
-            }
-            QLabel {
-                color: #1E3A8A;
-            }
-            QLineEdit, QComboBox {
-                padding: 8px;
-                border: 1px solid #CBD5E1;
-                border-radius: 4px;
-                background-color: white;
-                min-height: 35px;
-            }
-            QTableWidget {
-                border: 1px solid #CBD5E1;
-                gridline-color: #E2E8F0;
-            }
-            QPushButton {
-                background-color: #3B82F6;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #1E40AF;
-            }
+        
+        self.setStyleSheet(f"""
+            QDialog {{ background-color: {COLORS['light_bg']}; }}
+            QLabel {{ color: {COLORS['text_dark']}; font-weight: bold; }}
+            QLineEdit, QComboBox {{ padding: 8px; border: 1px solid #CBD5E1; border-radius: 4px; background-color: white; }}
+            QPushButton {{ background-color: {COLORS['primary']}; color: white; border: none; padding: 8px 16px; border-radius: 4px; font-weight: bold; }}
+            QPushButton:hover {{ background-color: {COLORS['primary_light']}; }}
         """)
         self.init_ui()
         self.load_users()
     
     def init_ui(self):
-        """Initialize the dialog UI"""
         main_layout = QVBoxLayout(self)
-        main_layout.setSpacing(15)
-        main_layout.setContentsMargins(20, 20, 20, 20)
-        
-        # Add User Section
-        add_section = QLabel("➕ Add New User:")
-        add_section.setStyleSheet("font-weight: bold; color: #1E3A8A; font-size: 11pt;")
-        main_layout.addWidget(add_section)
         
         add_layout = QHBoxLayout()
-        add_layout.setSpacing(10)
-        
         self.new_username_input = QLineEdit()
         self.new_username_input.setPlaceholderText("Username")
+        self.new_username_input.setMaxLength(30)
         add_layout.addWidget(self.new_username_input)
         
         self.new_password_input = QLineEdit()
         self.new_password_input.setPlaceholderText("Password")
         self.new_password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.new_password_input.setMaxLength(50)
         add_layout.addWidget(self.new_password_input)
         
         self.new_role_combo = QComboBox()
@@ -342,798 +192,770 @@ class ManageUsersDialog(QDialog):
         add_btn.clicked.connect(self.add_user)
         add_layout.addWidget(add_btn)
         
+        main_layout.addWidget(QLabel("➕ Add New User:"))
         main_layout.addLayout(add_layout)
         
-        # Separator
-        separator = QFrame()
-        separator.setFrameShape(QFrame.Shape.HLine)
-        separator.setStyleSheet("background-color: #E2E8F0;")
-        main_layout.addWidget(separator)
-        
-        # Users Table Section
-        table_label = QLabel("👤 Existing Users:")
-        table_label.setStyleSheet("font-weight: bold; color: #1E3A8A; font-size: 11pt;")
-        main_layout.addWidget(table_label)
-        
-        # Users table
         self.users_table = QTableWidget()
         self.users_table.setColumnCount(4)
         self.users_table.setHorizontalHeaderLabels(['Username', 'Role', 'Change Role', 'Delete'])
-        self.users_table.horizontalHeader().setStretchLastSection(False)
-        self.users_table.setSelectionBehavior(self.users_table.SelectionBehavior.SelectRows)
-        self.users_table.setAlternatingRowColors(True)
+        self.users_table.horizontalHeader().setStretchLastSection(True)
+        main_layout.addWidget(QLabel("👤 Existing Users:"))
         main_layout.addWidget(self.users_table)
         
-        # Close button
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.accept)
         main_layout.addWidget(close_btn)
-    
+        
     def load_users(self):
-        """Load users from database"""
-        try:
-            conn = sqlite3.connect("data/app_database.db")
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, username, role FROM users ORDER BY username")
-            users = cursor.fetchall()
-            conn.close()
+        conn = sqlite3.connect("data/app_database.db", timeout=10.0)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, username, role FROM users ORDER BY username")
+        users = cursor.fetchall()
+        conn.close()
+        
+        self.users_table.setRowCount(len(users))
+        self.users_table.verticalHeader().setDefaultSectionSize(50)
+        
+        for row_idx, (user_id, username, role) in enumerate(users):
+            item = QTableWidgetItem(username)
+            item.setData(1001, user_id)
+            self.users_table.setItem(row_idx, 0, item)
+            self.users_table.setItem(row_idx, 1, QTableWidgetItem(role))
             
-            self.users_table.setRowCount(len(users))
-            for row_idx, (user_id, username, role) in enumerate(users):
-                # Username
-                username_item = QTableWidgetItem(username)
-                username_item.setData(1001, user_id)
-                self.users_table.setItem(row_idx, 0, username_item)
-                
-                # Role
-                role_item = QTableWidgetItem(role)
-                self.users_table.setItem(row_idx, 1, role_item)
-                
-                # Change Role button
-                change_role_btn = QPushButton("Change")
-                change_role_btn.clicked.connect(lambda checked, rid=user_id, rn=username: self.change_role_dialog(rid, rn))
-                self.users_table.setCellWidget(row_idx, 2, change_role_btn)
-                
-                # Delete button
-                delete_btn = QPushButton("Delete")
-                delete_btn.setStyleSheet("""
-                    QPushButton {
-                        background-color: #EF4444;
-                    }
-                    QPushButton:hover {
-                        background-color: #DC2626;
-                    }
-                """)
-                delete_btn.clicked.connect(lambda checked, rid=user_id, rn=username: self.delete_user(rid, rn))
-                self.users_table.setCellWidget(row_idx, 3, delete_btn)
+            cell_btn_style = "margin: 4px; padding: 6px; border-radius: 4px; font-weight: bold; color: white; border: none;"
             
-            # Adjust column widths
-            self.users_table.resizeColumnsToContents()
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load users: {str(e)}")
-    
+            change_btn = QPushButton("Change")
+            change_btn.setStyleSheet(f"background-color: {COLORS['primary']}; {cell_btn_style}")
+            change_btn.clicked.connect(lambda checked, rid=user_id, rn=username: self.change_role(rid, rn))
+            self.users_table.setCellWidget(row_idx, 2, change_btn)
+            
+            del_btn = QPushButton("Delete")
+            del_btn.setStyleSheet(f"background-color: #EF4444; {cell_btn_style}")
+            del_btn.clicked.connect(lambda checked, rid=user_id, rn=username: self.delete_user(rid, rn))
+            self.users_table.setCellWidget(row_idx, 3, del_btn)
+            
+            self.users_table.setRowHeight(row_idx, 70)
+
     def add_user(self):
-        """Add a new user"""
         username = self.new_username_input.text().strip()
         password = self.new_password_input.text()
         role = self.new_role_combo.currentText()
         
-        if not username or not password:
-            QMessageBox.warning(self, "Input Error", "Please enter username and password")
+        # --- Validation Checks ---
+        if not username or not password: 
+            QMessageBox.warning(self, "Validation Error", "Both username and password are required.")
+            return
+            
+        if len(username) < 4:
+            QMessageBox.warning(self, "Validation Error", "Username must be at least 4 characters long.")
+            return
+            
+        if not username.isalnum():
+            QMessageBox.warning(self, "Validation Error", "Username can only contain letters and numbers (no spaces).")
+            return
+            
+        if len(password) < 8:
+            QMessageBox.warning(self, "Validation Error", "Password must be at least 8 characters long.")
             return
         
-        try:
-            conn = sqlite3.connect("data/app_database.db")
-            cursor = conn.cursor()
-            
-            # Check if user exists
-            cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
-            if cursor.fetchone():
-                QMessageBox.warning(self, "Duplicate User", "Username already exists")
-                conn.close()
-                return
-            
-            # Hash password and insert
-            password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
-            cursor.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
-                          (username, password_hash, role))
-            conn.commit()
+        conn = sqlite3.connect("data/app_database.db", timeout=10.0)
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
+        if cursor.fetchone():
+            QMessageBox.warning(self, "Error", "Username already exists. Please choose a different one.")
             conn.close()
+            return
             
-            QMessageBox.information(self, "Success", f"User '{username}' added successfully")
-            self.new_username_input.clear()
-            self.new_password_input.clear()
-            self.load_users()
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to add user: {str(e)}")
-    
-    def change_role_dialog(self, user_id, username):
-        """Show dialog to change user role"""
-        # Determine current role
-        try:
-            conn = sqlite3.connect("data/app_database.db")
-            cursor = conn.cursor()
-            cursor.execute("SELECT role FROM users WHERE id = ?", (user_id,))
-            current_role = cursor.fetchone()[0]
-            conn.close()
-            
-            new_role = "user" if current_role.lower() == "admin" else "admin"
-            
-            reply = QMessageBox.question(
-                self,
-                "Change User Role",
-                f"Change {username}'s role from '{current_role}' to '{new_role}'?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No
-            )
-            
-            if reply == QMessageBox.StandardButton.Yes:
-                conn = sqlite3.connect("data/app_database.db")
-                cursor = conn.cursor()
-                cursor.execute("UPDATE users SET role = ? WHERE id = ?", (new_role, user_id))
-                conn.commit()
-                conn.close()
-                
-                QMessageBox.information(self, "Success", f"Role changed to '{new_role}'")
-                self.load_users()
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to change role: {str(e)}")
-    
-    def delete_user(self, user_id, username):
-        """Delete a user"""
-        reply = QMessageBox.question(
-            self,
-            "Confirm Deletion",
-            f"Are you sure you want to delete user '{username}'?\nThis action cannot be undone.",
+        hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
+        cursor.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)", (username, hashed, role))
+        conn.commit()
+        conn.close()
+        
+        QMessageBox.information(self, "Success", f"User '{username}' has been successfully created.")
+        
+        self.new_username_input.clear()
+        self.new_password_input.clear()
+        self.load_users()
+
+    def change_role(self, user_id, username):
+        conn = sqlite3.connect("data/app_database.db", timeout=10.0)
+        cursor = conn.cursor()
+        cursor.execute("SELECT role FROM users WHERE id = ?", (user_id,))
+        current_role = cursor.fetchone()[0]
+        new_role = "user" if current_role.lower() == "admin" else "admin"
+        
+        msg = f"Change {username}'s role from '{current_role}' to '{new_role}'?\n\nThis will change their permissions in the system."
+        if QMessageBox.question(
+            self, 
+            "Confirm Role Change", 
+            msg,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
-        )
-        
-        if reply == QMessageBox.StandardButton.Yes:
-            try:
-                conn = sqlite3.connect("data/app_database.db")
-                cursor = conn.cursor()
-                cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
-                conn.commit()
-                conn.close()
-                
-                QMessageBox.information(self, "Success", f"User '{username}' deleted")
-                self.load_users()
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to delete user: {str(e)}")
+        ) == QMessageBox.StandardButton.Yes:
+            cursor.execute("UPDATE users SET role = ? WHERE id = ?", (new_role, user_id))
+            conn.commit()
+            QMessageBox.information(self, "Success", f"{username}'s role changed to {new_role}.")
+            self.load_users()
+        conn.close()
 
-class MainWindow(QMainWindow):
-    def __init__(self, role):
-        super().__init__()
+    def delete_user(self, user_id, username):
+        msg = f"Are you sure you want to delete the user '{username}'?\n\nThis action cannot be undone and they will lose access to the system."
+        if QMessageBox.critical(
+            self, 
+            "Confirm User Deletion", 
+            msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        ) == QMessageBox.StandardButton.Yes:
+            conn = sqlite3.connect("data/app_database.db", timeout=10.0)
+            conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+            conn.commit()
+            conn.close()
+            QMessageBox.information(self, "Success", f"User '{username}' has been deleted.")
+            self.load_users()
+
+# --- Core Data Management Dialog ---
+
+class DataTableDialog(QDialog):
+    def __init__(self, role, parent=None):
+        super().__init__(parent)
         self.role = role
-        self.setWindowTitle(f"Project Manager - {role.capitalize()}")
-        self.setGeometry(50, 50, 1200, 750)
-        self.setStyleSheet(MAIN_STYLESHEET)
+        self.setWindowTitle("Data Manager")
+        self.resize(1100, 700)
         
-        # Sort state tracking
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowMaximizeButtonHint | Qt.WindowType.WindowMinimizeButtonHint)
+        
+        self.setStyleSheet(f"""
+            QDialog {{ background-color: {COLORS['light_bg']}; }}
+            QTableWidget {{ background-color: white; alternate-background-color: #F5FFF7; }}
+            QLabel {{ color: {COLORS['text_dark']}; font-weight: bold; }}
+            QPushButton {{ background-color: {COLORS['primary']}; color: white; border-radius: 4px; padding: 6px 12px; font-weight: bold; border: none; }}
+            QPushButton:hover {{ background-color: {COLORS['primary_light']}; }}
+            QLineEdit, QComboBox {{ padding: 6px; border: 1px solid #CBD5E1; border-radius: 4px; color: {COLORS['text_dark']}; }}
+        """)
+        
         self.sort_column = None
         self.sort_ascending = True
         
-        # Main Layout
-        self.central_widget = QWidget()
-        self.setCentralWidget(self.central_widget)
-        self.layout = QVBoxLayout(self.central_widget)
+        self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(15, 15, 15, 15)
         self.layout.setSpacing(12)
-        
-        # Header Section
-        header_layout = QHBoxLayout()
-        header_layout.setSpacing(10)
-        
-        title_label = QLabel("Project Records")
-        title_label.setStyleSheet("font-size: 16pt; font-weight: bold; color: #1E3A8A;")
-        header_layout.addWidget(title_label)
-        
-        role_badge = QLabel(f"Role: {role.upper()}")
-        role_badge.setStyleSheet("""
-            background-color: #E0F2FE;
-            color: #0369A1;
-            padding: 4px 12px;
-            border-radius: 12px;
-            font-weight: 500;
-            font-size: 9pt;
-        """)
-        header_layout.addStretch()
-        header_layout.addWidget(role_badge)
-        
-        self.layout.addLayout(header_layout)
-        
-        # Separator
-        separator = QFrame()
-        separator.setFrameShape(QFrame.Shape.HLine)
-        separator.setStyleSheet("background-color: #E2E8F0;")
-        self.layout.addWidget(separator)
+        self.setup_ui()
+        self.load_data()
 
-        # Filter Section
+    def setup_ui(self):
+        # Filters
         filter_layout = QHBoxLayout()
-        filter_layout.setSpacing(10)
+        filter_layout.setSpacing(12)
+        filter_layout.setContentsMargins(0, 10, 0, 10)
+        filter_layout.addWidget(QLabel("🔍 Filters:"))
         
-        filter_label = QLabel("🔍 Filters:")
-        filter_label.setStyleSheet("font-weight: bold; color: #1E3A8A;")
-        filter_layout.addWidget(filter_label)
-        
-        # Create filter dropdowns for key categories
         self.client_filter = QComboBox()
         self.client_filter.addItem("All Clients")
-        self.client_filter.currentIndexChanged.connect(self.apply_filters)
+        self.client_filter.setMinimumHeight(32)
+        self.client_filter.currentIndexChanged.connect(self.load_data)
         filter_layout.addWidget(QLabel("Client:"))
         filter_layout.addWidget(self.client_filter)
         
         self.location_filter = QComboBox()
         self.location_filter.addItem("All Locations")
-        self.location_filter.currentIndexChanged.connect(self.apply_filters)
+        self.location_filter.setMinimumHeight(32)
+        self.location_filter.currentIndexChanged.connect(self.load_data)
         filter_layout.addWidget(QLabel("Location:"))
         filter_layout.addWidget(self.location_filter)
         
         self.currency_filter = QComboBox()
         self.currency_filter.addItem("All Currencies")
-        self.currency_filter.currentIndexChanged.connect(self.apply_filters)
+        self.currency_filter.setMinimumHeight(32)
+        self.currency_filter.currentIndexChanged.connect(self.load_data)
         filter_layout.addWidget(QLabel("Currency:"))
         filter_layout.addWidget(self.currency_filter)
         
         self.progress_filter = QComboBox()
         self.progress_filter.addItem("All Progress")
-        self.progress_filter.currentIndexChanged.connect(self.apply_filters)
+        self.progress_filter.setMinimumHeight(32)
+        self.progress_filter.currentIndexChanged.connect(self.load_data)
         filter_layout.addWidget(QLabel("Progress:"))
         filter_layout.addWidget(self.progress_filter)
         
+        clear_btn = QPushButton("Clear Filters")
+        clear_btn.setMinimumHeight(32)
+        clear_btn.clicked.connect(self.clear_filters)
+        filter_layout.addWidget(clear_btn)
         filter_layout.addStretch()
-        
-        clear_filters_btn = QPushButton("Clear Filters")
-        clear_filters_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        clear_filters_btn.clicked.connect(self.clear_filters)
-        filter_layout.addWidget(clear_filters_btn)
-        
         self.layout.addLayout(filter_layout)
-
-        # Separator
-        separator = QFrame()
-        separator.setFrameShape(QFrame.Shape.HLine)
-        separator.setStyleSheet("background-color: #E2E8F0;")
-        self.layout.addWidget(separator)
-
-        # Search Bar for real-time alphabetical filtering
+        
+        # Search
         search_layout = QHBoxLayout()
-        search_layout.setSpacing(10)
-        
-        search_label = QLabel("🔎 Search:")
-        search_label.setStyleSheet("font-weight: bold; color: #1E3A8A;")
-        search_layout.addWidget(search_label)
-        
+        search_layout.setSpacing(12)
+        search_layout.setContentsMargins(0, 5, 0, 5)
+        search_layout.addWidget(QLabel("🔎 Search:"))
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search across all columns...")
-        self.search_input.setStyleSheet("""
-            QLineEdit {
-                padding: 8px 12px;
-                border: 1px solid #CBD5E1;
-                border-radius: 4px;
-                background-color: white;
-                color: #334155;
-            }
-            QLineEdit:focus {
-                border: 2px solid #3B82F6;
-            }
-        """)
+        self.search_input.setMinimumHeight(32)
         self.search_input.textChanged.connect(self.on_search_text_changed)
         search_layout.addWidget(self.search_input)
-        
-        clear_search_btn = QPushButton("✕ Clear Search")
-        clear_search_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        clear_search_btn.clicked.connect(self.clear_search)
-        search_layout.addWidget(clear_search_btn)
-        
-        search_layout.addStretch()
         self.layout.addLayout(search_layout)
-
-        # Separator
-        separator2 = QFrame()
-        separator2.setFrameShape(QFrame.Shape.HLine)
-        separator2.setStyleSheet("background-color: #E2E8F0;")
-        self.layout.addWidget(separator2)
-
-        # Table Widget
+        
+        # Table
         self.table = QTableWidget()
-        self.table.setColumnCount(11)  # 11 data columns (no checkbox)
-        self.table.setHorizontalHeaderLabels(['No.', 'Client', 'Location', 'Currency', 
-                                              'Progress', 'Image', 'Project', 
-                                              'Gemphil Device', 'Details', 'Contact', 'Email'])
+        self.table.setColumnCount(11)
+        self.table.setHorizontalHeaderLabels(['No.', 'Client', 'Location', 'Currency', 'Progress', 'Image', 'Project', 'Gemphil Device', 'Details', 'Contact', 'Email'])
         self.table.setAlternatingRowColors(True)
-        self.table.setSelectionBehavior(self.table.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(self.table.SelectionMode.MultiSelection)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.MultiSelection)
+        
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self.table.horizontalHeader().setStretchLastSection(True)
-        
-        # Make header taller with better spacing
-        self.table.horizontalHeader().setDefaultSectionSize(100)
-        self.table.horizontalHeader().setSectionResizeMode(self.table.horizontalHeader().ResizeMode.Interactive)
-        self.table.horizontalHeader().setMinimumHeight(48)
-        
-        # Connect header click signal for column sorting
         self.table.horizontalHeader().sectionClicked.connect(self.on_header_click)
         
-        # Enable gridlines for clear column/row division
-        self.table.setShowGrid(True)
-        self.table.setGridStyle(Qt.PenStyle.SolidLine)
+        for col in range(11):
+            self.table.setColumnWidth(col, 100)
         
-        # Set row height for better visibility AND allow resizing
-        self.table.verticalHeader().setDefaultSectionSize(32)
-        self.table.verticalHeader().setVisible(True)  # <-- Changed to True to allow users to adjust row heights
-        self.table.verticalHeader().setSectionResizeMode(self.table.verticalHeader().ResizeMode.Interactive)
+        self.table.setWordWrap(True)
+        self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.table.verticalHeader().setDefaultSectionSize(50)
+        
+        # --- NEW: Connect double click to open files/links ---
+        self.table.cellDoubleClicked.connect(self.on_cell_double_clicked)
+        # -----------------------------------------------------
         
         self.layout.addWidget(self.table)
-
-        # Button layout for CRUD actions
-        button_layout1 = QHBoxLayout()
-        button_layout1.setSpacing(10)
         
-        self.add_btn = QPushButton("➕ Add Record")
-        self.add_btn.setObjectName("addBtn")
-        self.add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.add_btn.clicked.connect(self.add_record)
-        button_layout1.addWidget(self.add_btn)
+        # Actions
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(8)
         
-        self.edit_btn = QPushButton("✏️ Edit Record")
-        self.edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.edit_btn.clicked.connect(self.edit_record)
-        button_layout1.addWidget(self.edit_btn)
+        add_btn = QPushButton("➕ Add")
+        add_btn.clicked.connect(self.add_record)
+        add_btn.setMinimumHeight(40)
         
-        self.delete_btn = QPushButton("🗑️ Delete Record")
-        self.delete_btn.setObjectName("deleteBtn")
-        self.delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.delete_btn.clicked.connect(self.delete_record)
-        button_layout1.addWidget(self.delete_btn)
+        edit_btn = QPushButton("✏️ Edit")
+        edit_btn.clicked.connect(self.edit_record)
+        edit_btn.setMinimumHeight(40)
+        if self.role.lower() != 'admin':
+            edit_btn.setEnabled(False)
+            edit_btn.setStyleSheet("""
+                QPushButton { background-color: #BDBDBD; color: #757575; }
+                QPushButton:hover { background-color: #BDBDBD; }
+            """)
+            edit_btn.setToolTip("Only administrators can edit records")
         
-        self.refresh_btn = QPushButton("🔄 Refresh")
-        self.refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.refresh_btn.clicked.connect(self.load_data)
-        button_layout1.addWidget(self.refresh_btn)
+        del_btn = QPushButton("🗑️ Delete")
+        del_btn.clicked.connect(self.delete_record)
+        del_btn.setMinimumHeight(40)
+        del_btn.setStyleSheet("background-color: #EF4444;")
+        if self.role.lower() != 'admin':
+            del_btn.setEnabled(False)
+            del_btn.setStyleSheet("""
+                QPushButton { background-color: #BDBDBD; color: #757575; }
+                QPushButton:hover { background-color: #BDBDBD; }
+            """)
+            del_btn.setToolTip("Only administrators can delete records")
         
-        # Select All and Deselect All buttons
-        self.select_all_btn = QPushButton("✅ Select All")
-        self.select_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.select_all_btn.clicked.connect(self.table.selectAll)
-        button_layout1.addWidget(self.select_all_btn)
+        import_btn = QPushButton("📥 Import")
+        import_btn.clicked.connect(self.import_data)
+        import_btn.setMinimumHeight(40)
         
-        self.deselect_all_btn = QPushButton("❌ Deselect All")
-        self.deselect_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.deselect_all_btn.clicked.connect(self.table.clearSelection)
-        button_layout1.addWidget(self.deselect_all_btn)
+        export_btn = QPushButton("📤 Export")
+        export_btn.clicked.connect(self.export_data)
+        export_btn.setMinimumHeight(40)
         
-        button_layout1.addStretch()
-        self.layout.addLayout(button_layout1)
-        
-        # Button layout for data management
-        button_layout2 = QHBoxLayout()
-        button_layout2.setSpacing(10)
-        
-        self.import_btn = QPushButton("📥 Import Excel")
-        self.import_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.import_btn.clicked.connect(self.import_data)
-        button_layout2.addWidget(self.import_btn)
-        
-        self.export_btn = QPushButton("📤 Export Excel")
-        self.export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.export_btn.clicked.connect(self.export_data)
-        button_layout2.addWidget(self.export_btn)
-        
-        button_layout2.addStretch()
-        
-        self.manage_users_btn = QPushButton("👥 Manage Users")
-        self.manage_users_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.manage_users_btn.clicked.connect(self.manage_users)
-        self.manage_users_btn.setEnabled(False)  # Disabled until admin login
-        button_layout2.addWidget(self.manage_users_btn)
-        
-        self.layout.addLayout(button_layout2)
-        
-        # Enable Manage Users button if admin
-        if role.lower() == 'admin':
-            self.manage_users_btn.setEnabled(True)
-
-        self.load_data()
+        btn_layout.addWidget(add_btn)
+        btn_layout.addWidget(edit_btn)
+        btn_layout.addWidget(del_btn)
+        btn_layout.addStretch()
+        btn_layout.addWidget(import_btn)
+        btn_layout.addWidget(export_btn)
+        self.layout.addLayout(btn_layout)
 
     def load_data(self):
-        """Fetch data from database and populate table"""
         try:
-            conn = sqlite3.connect("data/app_database.db")
+            conn = sqlite3.connect("data/app_database.db", timeout=10.0)
             cursor = conn.cursor()
             
-            # Populate filter options (get unique values)
             self.populate_filter_options(cursor)
             
-            # Build filter query
             query = "SELECT id, NO, CLIENT, LOCATION, CURRENCY, PROGRESS, IMAGE_PATH, PROJECT, GEMPHIL_DEVICE, DETAILS, CONTACT_PERSON, EMAIL FROM records WHERE 1=1"
             params = []
             
-            # Apply filters
             if self.client_filter.currentText() != "All Clients":
-                query += " AND CLIENT = ?"
-                params.append(self.client_filter.currentText())
-            
+                query += " AND CLIENT = ?"; params.append(self.client_filter.currentText())
             if self.location_filter.currentText() != "All Locations":
-                query += " AND LOCATION = ?"
-                params.append(self.location_filter.currentText())
-            
+                query += " AND LOCATION = ?"; params.append(self.location_filter.currentText())
             if self.currency_filter.currentText() != "All Currencies":
-                query += " AND CURRENCY = ?"
-                params.append(self.currency_filter.currentText())
-            
+                query += " AND CURRENCY = ?"; params.append(self.currency_filter.currentText())
             if self.progress_filter.currentText() != "All Progress":
-                query += " AND PROGRESS = ?"
-                params.append(self.progress_filter.currentText())
-            
-            # Apply sorting
+                query += " AND PROGRESS = ?"; params.append(self.progress_filter.currentText())
+                
             if self.sort_column is not None:
-                # Map column index to database column name
-                column_map = {
-                    0: "NO",
-                    1: "CLIENT",
-                    2: "LOCATION",
-                    3: "CURRENCY",
-                    4: "PROGRESS",
-                    5: "IMAGE_PATH",
-                    6: "PROJECT",
-                    7: "GEMPHIL_DEVICE",
-                    8: "DETAILS",
-                    9: "CONTACT_PERSON",
-                    10: "EMAIL"
-                }
-                
-                # Columns that should be sorted numerically
-                numeric_columns = {"NO", "PROJECT", "GEMPHIL_DEVICE"}
-                
-                sort_column = column_map.get(self.sort_column, "id")
-                sort_order = "ASC" if self.sort_ascending else "DESC"
-                
-                # Use CAST to NUMERIC for numeric columns to ensure proper numeric sorting
-                if sort_column in numeric_columns:
-                    query += f" ORDER BY CAST({sort_column} AS NUMERIC) {sort_order}"
+                col_map = {0:"NO", 1:"CLIENT", 2:"LOCATION", 3:"CURRENCY", 4:"PROGRESS", 5:"IMAGE_PATH", 6:"PROJECT", 7:"GEMPHIL_DEVICE", 8:"DETAILS", 9:"CONTACT_PERSON", 10:"EMAIL"}
+                sort_col = col_map.get(self.sort_column, "id")
+                order = "ASC" if self.sort_ascending else "DESC"
+                if sort_col in {"NO", "PROJECT", "GEMPHIL_DEVICE"}:
+                    query += f" ORDER BY CAST({sort_col} AS NUMERIC) {order}"
                 else:
-                    query += f" ORDER BY {sort_column} {sort_order}"
+                    query += f" ORDER BY {sort_col} {order}"
             else:
                 query += " ORDER BY id ASC"
-            
+                
             cursor.execute(query, params)
             rows = cursor.fetchall()
             conn.close()
-
+            
             self.table.setRowCount(len(rows))
             for row_idx, row_data in enumerate(rows):
-                record_id = row_data[0]  # First column is the id
-                
-                # Display data columns (no checkbox column)
-                for col_idx, col_data in enumerate(row_data[1:], start=0):
-                    item = QTableWidgetItem(str(col_data) if col_data else "")
-                    item.setData(1001, record_id)  # Store record_id as custom data
+                record_id = row_data[0]
+                for col_idx, col_data in enumerate(row_data[1:]):
+                    text_val = str(col_data) if col_data else ""
+                    item = QTableWidgetItem(text_val)
+                    item.setData(1001, record_id)
+                    
+                    # --- NEW: Style links to look clickable ---
+                    # Check if it's the Image column (idx 5) OR if the text is a web link
+                    if text_val and (col_idx == 5 or text_val.startswith('http') or text_val.startswith('www.')):
+                        item.setForeground(QColor("#2563EB")) # Standard link blue
+                        font = item.font()
+                        font.setUnderline(True)
+                        item.setFont(font)
+                        item.setToolTip("Double-click to open file/link")
+                    # ------------------------------------------
+                    
                     self.table.setItem(row_idx, col_idx, item)
             
-            # Reset search filter after loading data
-            self.search_input.blockSignals(True)
-            self.search_input.clear()
-            self.search_input.blockSignals(False)
+            self.update_header_appearance()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load data: {str(e)}")
-    
+
     def populate_filter_options(self, cursor):
-        """Populate filter dropdowns with unique values from database"""
-        try:
-            # Get unique clients
-            cursor.execute("SELECT DISTINCT CLIENT FROM records WHERE CLIENT IS NOT NULL AND CLIENT != '' ORDER BY CLIENT")
-            clients = [row[0] for row in cursor.fetchall()]
-            self.client_filter.blockSignals(True)
-            current_client = self.client_filter.currentText()
-            self.client_filter.clear()
-            self.client_filter.addItem("All Clients")
-            self.client_filter.addItems(clients)
-            if current_client in clients or current_client == "All Clients":
-                self.client_filter.setCurrentText(current_client)
-            self.client_filter.blockSignals(False)
-            
-            # Get unique locations
-            cursor.execute("SELECT DISTINCT LOCATION FROM records WHERE LOCATION IS NOT NULL AND LOCATION != '' ORDER BY LOCATION")
-            locations = [row[0] for row in cursor.fetchall()]
-            self.location_filter.blockSignals(True)
-            current_location = self.location_filter.currentText()
-            self.location_filter.clear()
-            self.location_filter.addItem("All Locations")
-            self.location_filter.addItems(locations)
-            if current_location in locations or current_location == "All Locations":
-                self.location_filter.setCurrentText(current_location)
-            self.location_filter.blockSignals(False)
-            
-            # Get unique currencies
-            cursor.execute("SELECT DISTINCT CURRENCY FROM records WHERE CURRENCY IS NOT NULL AND CURRENCY != '' ORDER BY CURRENCY")
-            currencies = [row[0] for row in cursor.fetchall()]
-            self.currency_filter.blockSignals(True)
-            current_currency = self.currency_filter.currentText()
-            self.currency_filter.clear()
-            self.currency_filter.addItem("All Currencies")
-            self.currency_filter.addItems(currencies)
-            if current_currency in currencies or current_currency == "All Currencies":
-                self.currency_filter.setCurrentText(current_currency)
-            self.currency_filter.blockSignals(False)
-            
-            # Get unique progress values
-            cursor.execute("SELECT DISTINCT PROGRESS FROM records WHERE PROGRESS IS NOT NULL AND PROGRESS != '' ORDER BY PROGRESS")
-            progress_values = [row[0] for row in cursor.fetchall()]
-            self.progress_filter.blockSignals(True)
-            current_progress = self.progress_filter.currentText()
-            self.progress_filter.clear()
-            self.progress_filter.addItem("All Progress")
-            self.progress_filter.addItems(progress_values)
-            if current_progress in progress_values or current_progress == "All Progress":
-                self.progress_filter.setCurrentText(current_progress)
-            self.progress_filter.blockSignals(False)
-        except Exception as e:
-            print(f"Error populating filters: {str(e)}")
-    
-    def apply_filters(self):
-        """Apply filters and reload data"""
-        self.load_data()
-    
+        def update_combo(combo, col_name, default_text):
+            cursor.execute(f"SELECT DISTINCT {col_name} FROM records WHERE {col_name} IS NOT NULL AND {col_name} != '' ORDER BY {col_name}")
+            items = [r[0] for r in cursor.fetchall()]
+            combo.blockSignals(True)
+            curr = combo.currentText()
+            combo.clear(); combo.addItem(default_text); combo.addItems(items)
+            if curr in items or curr == default_text: combo.setCurrentText(curr)
+            combo.blockSignals(False)
+
+        update_combo(self.client_filter, "CLIENT", "All Clients")
+        update_combo(self.location_filter, "LOCATION", "All Locations")
+        update_combo(self.currency_filter, "CURRENCY", "All Currencies")
+        update_combo(self.progress_filter, "PROGRESS", "All Progress")
+
     def clear_filters(self):
-        """Clear all filters"""
         self.client_filter.setCurrentIndex(0)
         self.location_filter.setCurrentIndex(0)
         self.currency_filter.setCurrentIndex(0)
         self.progress_filter.setCurrentIndex(0)
         self.load_data()
-    
-    def on_header_click(self, column_index):
-        """Handle header click for column sorting"""
-        # If clicking the same column, toggle ascending/descending
-        if self.sort_column == column_index:
-            self.sort_ascending = not self.sort_ascending
-        else:
-            self.sort_column = column_index
-            self.sort_ascending = True
+
+    def on_search_text_changed(self, text):
+        text = text.lower().strip()
+        for row in range(self.table.rowCount()):
+            match = not text or any(text in self.table.item(row, col).text().lower() for col in range(self.table.columnCount()))
+            self.table.setRowHidden(row, not match)
+
+    def on_cell_double_clicked(self, row, col):
+        """Opens local files or web links when a cell is double-clicked."""
+        item = self.table.item(row, col)
+        if not item: return
         
-        # Reload data with new sort order
+        path = item.text().strip()
+        if not path: return
+        
+        # 1. Handle Web Links (Google Drive, websites, etc.)
+        if path.startswith('http://') or path.startswith('https://') or path.startswith('www.'):
+            # Ensure it has http:// if they only typed www.
+            url = path if path.startswith('http') else 'http://' + path
+            QDesktopServices.openUrl(QUrl(url))
+            return
+            
+        # 2. Handle Local Files (Images, PDFs, Excel files, etc.)
+        # We check if it's the Image column (col 5) or if it looks like a file path
+        if col == 5 or "\\" in path or "/" in path:
+            # Convert to absolute path so Windows knows exactly where it is
+            abs_path = os.path.abspath(path)
+            
+            if os.path.exists(abs_path):
+                # Open the file in its default Windows application
+                QDesktopServices.openUrl(QUrl.fromLocalFile(abs_path))
+            else:
+                QMessageBox.warning(
+                    self, 
+                    "File Not Found", 
+                    f"Could not find the file on this computer or network:\n\n{abs_path}"
+                )
+
+    def on_header_click(self, col):
+        self.sort_ascending = not self.sort_ascending if self.sort_column == col else True
+        self.sort_column = col
         self.load_data()
-        
-        # Update header appearance to show sort direction
-        self.update_header_appearance()
-    
+
     def update_header_appearance(self):
-        """Update header appearance to indicate sort direction"""
-        header = self.table.horizontalHeader()
-        column_labels = ['No.', 'Client', 'Location', 'Currency', 
-                        'Progress', 'Image', 'Project', 
-                        'Gemphil Device', 'Details', 'Contact', 'Email']
-        
-        for i, label in enumerate(column_labels):
+        labels = ['No.', 'Client', 'Location', 'Currency', 'Progress', 'Image', 'Project', 'Gemphil Device', 'Details', 'Contact', 'Email']
+        for i, label in enumerate(labels):
             if i == self.sort_column:
-                # Add indicator to show sort direction
-                arrow = "▲" if self.sort_ascending else "▼"
-                self.table.horizontalHeaderItem(i).setText(f"{label} {arrow}")
+                self.table.horizontalHeaderItem(i).setText(f"{label} {'▲' if self.sort_ascending else '▼'}")
             else:
                 self.table.horizontalHeaderItem(i).setText(label)
-    
-    def on_search_text_changed(self, search_text):
-        """Handle real-time search filtering across all columns"""
-        search_text = search_text.lower().strip()
-        
-        for row in range(self.table.rowCount()):
-            # Check if any cell in this row contains the search text
-            match_found = False
-            
-            if not search_text:
-                # If search is empty, show all rows
-                match_found = True
-            else:
-                for col in range(self.table.columnCount()):
-                    item = self.table.item(row, col)
-                    if item and search_text in item.text().lower():
-                        match_found = True
-                        break
-            
-            # Show or hide row based on match
-            self.table.setRowHidden(row, not match_found)
-    
-    def clear_search(self):
-        """Clear search input"""
-        self.search_input.clear()
-    
+
     def add_record(self):
-        """Open dialog to add a new record"""
-        dialog = AddEditRecordDialog(self)
-        if dialog.exec():
-            self.load_data()  # Refresh table after save
-    
+        if AddEditRecordDialog(self).exec(): self.load_data()
+
     def edit_record(self):
-        """Open dialog to edit the selected record"""
-        # Get all selected rows
-        selected_rows = self.table.selectionModel().selectedRows()
-        
-        if not selected_rows:
-            QMessageBox.warning(self, "Selection Error", "Please select a row to edit")
+        selected = self.table.selectionModel().selectedRows()
+        if not selected or len(selected) > 1:
+            QMessageBox.warning(self, "Selection", "Please select exactly one row to edit.")
             return
-        
-        if len(selected_rows) > 1:
-            QMessageBox.warning(self, "Multiple Selection Error", "Please select only one row to edit")
-            return
-        
-        # Get the record_id from the first (and only) selected row
-        row = selected_rows[0].row()
-        item = self.table.item(row, 0)
-        record_id = item.data(1001)  # Retrieve custom data
-        
-        dialog = AddEditRecordDialog(self, record_id=record_id)
-        if dialog.exec():
-            self.load_data()  # Refresh table after save
-    
+        record_id = self.table.item(selected[0].row(), 0).data(1001)
+        if AddEditRecordDialog(self, record_id=record_id).exec(): self.load_data()
+
     def delete_record(self):
-        """Delete the selected record(s) - supports multi-select with RBAC"""
-        # Get all selected rows
-        selected_rows = self.table.selectionModel().selectedRows()
-        
-        if not selected_rows:
-            QMessageBox.warning(self, "Selection Error", "Please select at least one record to delete")
+        selected = self.table.selectionModel().selectedRows()
+        if not selected: 
+            QMessageBox.warning(self, "No Selection", "Please select at least one record to delete.")
             return
         
-        # Collect record IDs and client names
-        record_ids = []
-        client_names = []
-        
-        for model_index in selected_rows:
-            row = model_index.row()
-            item = self.table.item(row, 0)
-            record_id = item.data(1001)
-            client_name = self.table.item(row, 1).text()  # Column 1 is Client (no checkbox column)
-            record_ids.append(record_id)
-            client_names.append(client_name)
-        
-        # RBAC Check: If not admin, require admin verification
         if self.role.lower() != 'admin':
-            # Show admin credential verification dialog
-            admin_dialog = AdminCredentialDialog(self)
-            if not admin_dialog.exec() or not admin_dialog.verified:
-                QMessageBox.warning(self, "Access Denied", "Admin verification failed. Deletion cancelled.")
+            dlg = AdminCredentialDialog(self)
+            if not dlg.exec() or not dlg.verified: 
+                QMessageBox.warning(self, "Verification Failed", "Admin verification required to delete records.")
                 return
         
-        # Confirmation dialog
-        if len(record_ids) == 1:
-            confirm_msg = f"Are you sure you want to delete the record for '{client_names[0]}'?\nThis action cannot be undone."
-            title = "Confirm Deletion"
+        num_records = len(selected)
+        if num_records == 1:
+            client = self.table.item(selected[0].row(), 1).text()
+            msg = f"Are you sure you want to delete this record?\n\nClient: {client}\n\nThis action cannot be undone."
         else:
-            confirm_msg = f"Are you sure you want to delete {len(record_ids)} records?\n\n{', '.join(client_names[:5])}"
-            if len(client_names) > 5:
-                confirm_msg += f"\n... and {len(client_names) - 5} more"
-            confirm_msg += "\n\nThis action cannot be undone."
-            title = f"Confirm Deletion of {len(record_ids)} Records"
+            msg = f"Are you sure you want to delete {num_records} records?\n\nThis action cannot be undone."
         
-        reply = QMessageBox.question(
+        reply = QMessageBox.critical(
             self, 
-            title, 
-            confirm_msg,
+            "Confirm Deletion", 
+            msg,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )
         
         if reply == QMessageBox.StandardButton.Yes:
             try:
-                conn = sqlite3.connect("data/app_database.db")
-                cursor = conn.cursor()
-                
-                # Delete all selected records
-                for record_id in record_ids:
-                    cursor.execute("DELETE FROM records WHERE id = ?", (record_id,))
-                
+                conn = sqlite3.connect("data/app_database.db", timeout=10.0)
+                for model_index in selected:
+                    record_id = self.table.item(model_index.row(), 0).data(1001)
+                    conn.execute("DELETE FROM records WHERE id = ?", (record_id,))
                 conn.commit()
                 conn.close()
-                
-                deleted_count = len(record_ids)
-                msg = f"Successfully deleted {deleted_count} record" if deleted_count == 1 else f"Successfully deleted {deleted_count} records"
-                QMessageBox.information(self, "Success", msg + "!")
-                self.load_data()  # Refresh table
+                QMessageBox.information(self, "Success", f"{num_records} record(s) deleted successfully.")
+                self.load_data()
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to delete record(s): {str(e)}")
-    
+                QMessageBox.critical(self, "Error", f"Failed to delete records: {str(e)}")
+
     def import_data(self):
-        """Import data from Excel file"""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, 
-            "Import Excel File", 
-            "", 
-            "Excel Files (*.xlsx *.xls);;All Files (*)"
-        )
-        
-        if not file_path:
-            return
-        
-        result = import_excel(file_path)
-        
-        if result['success']:
-            QMessageBox.information(self, "Import Successful", result['message'])
-            self.load_data()  # Refresh table
-        else:
-            QMessageBox.warning(self, "Import Failed", result['message'])
-    
+        path, _ = QFileDialog.getOpenFileName(self, "Import Excel", "", "Excel Files (*.xlsx *.xls)")
+        if path:
+            res = import_excel(path)
+            if res['success']: QMessageBox.information(self, "Success", res['message'])
+            else: QMessageBox.warning(self, "Failed", res['message'])
+            self.load_data()
+
     def export_data(self):
-        """Export data to Excel file - shows column selection dialog"""
-        # Show column selection dialog
-        column_dialog = ColumnSelectionDialog(self)
-        if column_dialog.exec() != QDialog.DialogCode.Accepted:
-            return  # User cancelled
-        
-        selected_columns = column_dialog.get_selected_columns()
-        
-        # Get selected rows
-        selected_rows = self.table.selectionModel().selectedRows()
-        
-        # Collect record IDs to export
-        record_ids_to_export = []
-        
-        if not selected_rows:
-            # Handle "No selection" case: ask to export all visible
-            reply = QMessageBox.question(
-                self, 
-                "Export Options", 
-                "No rows selected. Would you like to export ALL visible rows?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Cancel
-            )
+        dlg = ColumnSelectionDialog(self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            cols = dlg.get_selected_columns()
+            sort_by_client = dlg.is_sort_by_client()
             
-            if reply == QMessageBox.StandardButton.Yes:
-                # Export all visible rows (skip hidden rows from search filter)
-                for row_idx in range(self.table.rowCount()):
-                    # Skip hidden rows (filtered by search)
-                    if not self.table.isRowHidden(row_idx):
-                        item = self.table.item(row_idx, 0)
-                        if item:
-                            record_ids_to_export.append(item.data(1001))
-                export_mode = f"All {len(record_ids_to_export)} visible rows"
-            elif reply == QMessageBox.StandardButton.No:
-                QMessageBox.information(self, "Selection Required", "Please select specific rows and try again.")
-                return
+            if not cols:
+                return QMessageBox.warning(self, "Export Error", "No columns selected to export.")
+                
+            selected = self.table.selectionModel().selectedRows()
+            
+            if selected:
+                rows_to_export = [m.row() for m in selected]
             else:
-                return  # Cancelled
-        else:
-            # Export only selected rows (in table order)
-            for model_index in selected_rows:
-                row = model_index.row()
-                item = self.table.item(row, 0)
-                record_id = item.data(1001)
-                record_ids_to_export.append(record_id)
-            export_mode = f"Selected {len(record_ids_to_export)} rows"
+                rows_to_export = [r for r in range(self.table.rowCount()) if not self.table.isRowHidden(r)]
+            
+            if sort_by_client:
+                def get_client_text(row_idx):
+                    item = self.table.item(row_idx, 1)
+                    return item.text().lower() if item else ""
+                rows_to_export.sort(key=get_client_text)
+                
+            ids = [self.table.item(r, 0).data(1001) for r in rows_to_export]
+            
+            if not ids: return QMessageBox.warning(self, "Error", "No records to export.")
+            
+            path, _ = QFileDialog.getSaveFileName(self, "Export", "export.xlsx", "Excel (*.xlsx)")
+            if path:
+                res = export_excel(record_ids=ids, selected_columns=cols, save_path=path, preserve_order=True)
+                QMessageBox.information(self, "Export", res['message'] if res['success'] else f"Failed: {res['message']}")
+
+
+# --- Dashboard Window ---
+
+# --- Dashboard Window ---
+
+class MainWindow(QMainWindow):
+    def __init__(self, role):
+        super().__init__()
+        self.role = role
+        self.logged_out = False 
         
-        if not record_ids_to_export:
-            QMessageBox.warning(self, "Export Error", "No records to export")
-            return
+        self.setWindowTitle("GEMExtract Dashboard")
+        # Bumped height to 550 to give the chart more room to breathe
+        self.setFixedSize(850, 550) 
+        self.setStyleSheet(MAIN_STYLESHEET)
         
-        save_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export Excel File",
-            "export.xlsx",
-            "Excel Files (*.xlsx)"
+        central = QWidget()
+        self.setCentralWidget(central)
+        
+        # We use a horizontal layout to split the dashboard (Left: Data/Chart, Right: Actions)
+        main_layout = QHBoxLayout(central)
+        main_layout.setContentsMargins(40, 40, 40, 40)
+        main_layout.setSpacing(30)
+        
+        # --- LEFT PANEL: Text, Logo & Analytics ---
+        left_layout = QVBoxLayout()
+        left_layout.setSpacing(10) # Tighter vertical spacing
+        
+        # 1. LOGO
+        self.logo_label = QLabel()
+        logo_path = os.path.join("data", "images", "Logo.png")
+        if os.path.exists(logo_path):
+            pixmap = QPixmap(logo_path)
+            # Scaled slightly smaller to fit perfectly
+            scaled_pixmap = pixmap.scaledToWidth(80, Qt.TransformationMode.SmoothTransformation)
+            self.logo_label.setPixmap(scaled_pixmap)
+            self.logo_label.setAlignment(Qt.AlignmentFlag.AlignLeft) 
+            self.logo_label.setMaximumHeight(80) # Prevents the label from stretching vertically
+        
+        left_layout.addWidget(self.logo_label)
+        
+        # 2. GREETING
+        greeting = QLabel(f"Welcome back, {role.capitalize()}!")
+        greeting.setStyleSheet(f"font-size: 20pt; font-weight: bold; color: {COLORS['text_dark']};")
+        greeting.setMaximumHeight(40) # Prevents stretching
+        left_layout.addWidget(greeting)
+        
+        # 3. STATS
+        self.stats_label = QLabel()
+        self.stats_label.setStyleSheet("font-size: 14pt; color: #64748B; background: #E2E8F0; padding: 15px; border-radius: 8px;")
+        self.stats_label.setMaximumHeight(60) # Prevents stretching
+        left_layout.addWidget(self.stats_label)
+        
+        # 4. CHART CANVAS
+        self.figure = Figure(dpi=100) # Removed fixed figsize to let layout control it
+        self.figure.patch.set_facecolor(COLORS['light_bg']) 
+        self.canvas = FigureCanvasQTAgg(self.figure)
+        # By setting stretch=1, ALL empty vertical space is given exclusively to the chart
+        left_layout.addWidget(self.canvas, stretch=1) 
+        
+        
+        # --- RIGHT PANEL: Action Buttons ---
+        right_layout = QVBoxLayout()
+        right_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        
+        view_btn = QPushButton("📊 View Data Manager")
+        view_btn.setMinimumHeight(60)
+        view_btn.clicked.connect(self.open_data_manager)
+        right_layout.addWidget(view_btn)
+        
+        quick_actions_layout = QHBoxLayout()
+        import_btn = QPushButton("📥 Quick Import")
+        import_btn.setMinimumHeight(45)
+        import_btn.clicked.connect(self.quick_import)
+        quick_actions_layout.addWidget(import_btn)
+        
+        export_btn = QPushButton("📤 Quick Export")
+        export_btn.setMinimumHeight(45)
+        export_btn.clicked.connect(self.quick_export)
+        quick_actions_layout.addWidget(export_btn)
+        right_layout.addLayout(quick_actions_layout)
+        
+        if self.role == 'admin':
+            manage_btn = QPushButton("👥 Manage Users")
+            manage_btn.setMinimumHeight(50)
+            manage_btn.clicked.connect(self.manage_users)
+            right_layout.addWidget(manage_btn)
+            
+            backup_btn = QPushButton("💾 Backup Database")
+            backup_btn.setMinimumHeight(50)
+            backup_btn.setStyleSheet("background-color: #F59E0B;") 
+            backup_btn.clicked.connect(self.backup_database)
+            right_layout.addWidget(backup_btn)
+            
+        logout_btn = QPushButton("🚪 Logout")
+        logout_btn.setMinimumHeight(50)
+        logout_btn.setStyleSheet("background-color: #EF4444;")
+        logout_btn.clicked.connect(self.process_logout) 
+        right_layout.addWidget(logout_btn)
+        
+        main_layout.addLayout(left_layout, stretch=2)
+        main_layout.addLayout(right_layout, stretch=1)
+        
+        self.update_dashboard_data()
+
+    def update_dashboard_data(self):
+        """Updates both the total records label and the visual chart"""
+        try:
+            conn = sqlite3.connect("data/app_database.db", timeout=10.0)
+            cursor = conn.cursor()
+            
+            count = cursor.execute("SELECT COUNT(*) FROM records").fetchone()[0]
+            self.stats_label.setText(f"Total Records: {count}")
+            
+            self.figure.clear()
+            ax = self.figure.add_subplot(111)
+            ax.set_facecolor(COLORS['light_bg']) 
+            
+            cursor.execute('''
+                SELECT CLIENT, COUNT(*) as count 
+                FROM records 
+                WHERE CLIENT IS NOT NULL AND TRIM(CLIENT) != '' 
+                GROUP BY CLIENT 
+                ORDER BY count DESC 
+                LIMIT 5
+            ''')
+            results = cursor.fetchall()
+            conn.close()
+            
+            if not results:
+                ax.text(0.5, 0.5, "No client data available to graph.", 
+                        ha='center', va='center', fontsize=12, color=COLORS['text_dark'])
+                ax.axis('off')
+            else:
+                clients = [r[0][:15] + ('...' if len(r[0]) > 15 else '') for r in results]
+                counts = [r[1] for r in results]
+                
+                clients.reverse()
+                counts.reverse()
+                
+                bars = ax.barh(clients, counts, color=COLORS['primary'])
+                ax.set_title('Top 5 Clients', fontsize=14, fontweight='bold', color=COLORS['text_dark'], pad=15)
+                ax.tick_params(colors=COLORS['text_dark'], labelsize=10)
+                
+                ax.spines['top'].set_visible(False)
+                ax.spines['right'].set_visible(False)
+                ax.spines['bottom'].set_visible(False)
+                ax.spines['left'].set_color(COLORS['text_dark'])
+                ax.xaxis.set_visible(False) 
+                
+                for bar in bars:
+                    width = bar.get_width()
+                    ax.text(width + 0.1, bar.get_y() + bar.get_height()/2, 
+                            f'{int(width)}', ha='left', va='center', 
+                            color=COLORS['text_dark'], fontweight='bold')
+                            
+                # --- NEW FIX: Explicitly set margins so nothing is ever cut off ---
+                self.figure.subplots_adjust(left=0.35, right=0.90, top=0.85, bottom=0.05)
+                
+            self.canvas.draw()
+            
+        except Exception as e:
+            print(f"Chart Error: {e}")
+
+    def open_data_manager(self):
+        dialog = DataTableDialog(self.role, self)
+        dialog.exec()
+        self.update_dashboard_data()
+
+    def manage_users(self):
+        ManageUsersDialog(self).exec()
+
+    def quick_import(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Quick Import Excel", "", "Excel Files (*.xlsx *.xls)")
+        if path:
+            res = import_excel(path)
+            if res['success']: 
+                QMessageBox.information(self, "Success", res['message'])
+                self.update_dashboard_data()
+            else: 
+                QMessageBox.warning(self, "Failed", res['message'])
+
+    def quick_export(self):
+        dlg = ColumnSelectionDialog(self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            cols = dlg.get_selected_columns()
+            sort_by_client = dlg.is_sort_by_client()
+            
+            if not cols:
+                return QMessageBox.warning(self, "Export Error", "No columns selected to export.")
+                
+            try:
+                conn = sqlite3.connect("data/app_database.db", timeout=10.0)
+                count = conn.execute("SELECT COUNT(*) FROM records").fetchone()[0]
+                conn.close()
+                if count == 0:
+                    return QMessageBox.warning(self, "Error", "No records available to export.")
+            except: pass
+                
+            path, _ = QFileDialog.getSaveFileName(self, "Quick Export", "export.xlsx", "Excel (*.xlsx)")
+            if path:
+                if sort_by_client:
+                    conn = sqlite3.connect("data/app_database.db", timeout=10.0)
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT id FROM records ORDER BY CLIENT COLLATE NOCASE ASC")
+                    record_ids = [r[0] for r in cursor.fetchall()]
+                    conn.close()
+                    res = export_excel(record_ids=record_ids, selected_columns=cols, save_path=path, preserve_order=True)
+                else:
+                    res = export_excel(record_ids=None, selected_columns=cols, save_path=path)
+                
+                if res['success']:
+                    QMessageBox.information(self, "Export", res['message'])
+                else:
+                    QMessageBox.warning(self, "Export Failed", f"Failed: {res['message']}")
+
+    def backup_database(self):
+        """Creates a timestamped copy of the database file."""
+        try:
+            backup_dir = "data/backups"
+            if not os.path.exists(backup_dir):
+                os.makedirs(backup_dir)
+                
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_filename = f"backup_{timestamp}.db"
+            backup_path = os.path.join(backup_dir, backup_filename)
+            
+            source_db = "data/app_database.db"
+            if os.path.exists(source_db):
+                shutil.copy2(source_db, backup_path)
+                QMessageBox.information(
+                    self, 
+                    "Backup Successful", 
+                    f"Database safely backed up!\n\nSaved as: {backup_filename}\nLocation: {backup_path}"
+                )
+            else:
+                QMessageBox.warning(self, "Backup Failed", "The main database file could not be found.")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Backup Error", f"An error occurred during backup:\n{str(e)}")
+
+    def process_logout(self):
+        confirm = QMessageBox.question(
+            self, 
+            "Confirm Logout", 
+            "Are you sure you want to log out?", 
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
         
-        if not save_path:
-            return
-        
-        # Export with preserve_order=True to maintain table sort/filter order
-        result = export_excel(record_ids=record_ids_to_export, selected_columns=selected_columns, save_path=save_path, preserve_order=True)
-        
-        if result['success']:
-            QMessageBox.information(self, "Export Successful", f"Successfully exported {export_mode}:\n{result['message']}")
-        else:
-            QMessageBox.warning(self, "Export Failed", result['message'])
-    
-    def manage_users(self):
-        """Open user management dialog - admin only"""
-        if self.role.lower() != 'admin':
-            QMessageBox.warning(self, "Access Denied", "Only administrators can manage users")
-            return
-        
-        dialog = ManageUsersDialog(self)
-        dialog.exec()
+        if confirm == QMessageBox.StandardButton.Yes:
+            self.logged_out = True
+            self.close()
+
+
+# --- Entry Point ---
 
 if __name__ == "__main__":
-    # Initialize database before starting the app
+    # --- NEW: Force the app to always look in the correct folder ---
+    if getattr(sys, 'frozen', False):
+        # If running as a compiled .exe
+        os.chdir(os.path.dirname(sys.executable))
+    else:
+        # If running as a Python script
+        os.chdir(os.path.dirname(os.path.abspath(__file__)))
+    # ---------------------------------------------------------------
+
     if not os.path.exists('data'):
         os.makedirs('data')
     
@@ -1141,8 +963,24 @@ if __name__ == "__main__":
     create_default_admin()
     
     app = QApplication(sys.argv)
-    login = LoginWindow()
-    if login.exec():
-        main_win = MainWindow(login.user_role)
-        main_win.show()
-        sys.exit(app.exec())
+    
+    # Set the global window icon
+    icon_path = os.path.join("data", "images", "Logo.ico")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
+    
+    while True:
+        login = LoginWindow()
+        if login.exec() == QDialog.DialogCode.Accepted:
+            main_win = MainWindow(login.user_role)
+            main_win.show()
+            app.exec()
+            
+            if main_win.logged_out:
+                continue
+            else:
+                break 
+        else:
+            break 
+            
+    sys.exit(0)

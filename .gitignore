@@ -1,0 +1,16 @@
+# Virtual Environment
+.venv/
+venv/
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# PyInstaller Build Folders
+build/
+dist/
+*.spec
+
+# Database and Backups (Keep these local for security!)
+data/app_database.db
+data/backups/
