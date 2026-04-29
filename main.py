@@ -434,25 +434,11 @@ class DataTableDialog(QDialog):
         edit_btn = QPushButton("✏️ Edit")
         edit_btn.clicked.connect(self.edit_record)
         edit_btn.setMinimumHeight(40)
-        if self.role.lower() != 'admin':
-            edit_btn.setEnabled(False)
-            edit_btn.setStyleSheet("""
-                QPushButton { background-color: #BDBDBD; color: #757575; }
-                QPushButton:hover { background-color: #BDBDBD; }
-            """)
-            edit_btn.setToolTip("Only administrators can edit records")
         
         del_btn = QPushButton("🗑️ Delete")
         del_btn.clicked.connect(self.delete_record)
         del_btn.setMinimumHeight(40)
         del_btn.setStyleSheet("background-color: #EF4444;")
-        if self.role.lower() != 'admin':
-            del_btn.setEnabled(False)
-            del_btn.setStyleSheet("""
-                QPushButton { background-color: #BDBDBD; color: #757575; }
-                QPushButton:hover { background-color: #BDBDBD; }
-            """)
-            del_btn.setToolTip("Only administrators can delete records")
         
         import_btn = QPushButton("📥 Import")
         import_btn.clicked.connect(self.import_data)
@@ -720,14 +706,19 @@ class MainWindow(QMainWindow):
         
         # 1. LOGO
         self.logo_label = QLabel()
-        logo_path = os.path.join("data", "images", "Logo.png")
+        logo_path = os.path.join("data", "images", "Gemphil.png")
         if os.path.exists(logo_path):
             pixmap = QPixmap(logo_path)
-            # Scaled slightly smaller to fit perfectly
-            scaled_pixmap = pixmap.scaledToWidth(80, Qt.TransformationMode.SmoothTransformation)
+            
+            # 1. CHANGE THIS: Increase the width (e.g., from 80 to 150)
+            scaled_pixmap = pixmap.scaledToWidth(400, Qt.TransformationMode.SmoothTransformation)
+            
             self.logo_label.setPixmap(scaled_pixmap)
             self.logo_label.setAlignment(Qt.AlignmentFlag.AlignLeft) 
-            self.logo_label.setMaximumHeight(80) # Prevents the label from stretching vertically
+            
+            # 2. CHANGE THIS: Increase the maximum height to match your new width 
+            # so the layout doesn't cut off the bottom of the larger image
+            self.logo_label.setMaximumHeight(400) 
         
         left_layout.addWidget(self.logo_label)
         
